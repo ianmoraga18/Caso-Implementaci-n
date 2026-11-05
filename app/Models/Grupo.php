@@ -2,21 +2,23 @@
 
 namespace App\Models;
 
+use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Support\Facades\DB;
-use InvalidArgumentException;
 
 class Grupo extends Model
 {
+    public const MAXIMO_DOCENTES = 2;
+    public const MINIMO_ESTUDIANTES = 15;
+
     protected $fillable = ['numero_ciclo', 'ano', 'numero_grupo', 'abierto', 'curso_id'];
 
     protected $casts = [
         'abierto' => 'boolean',
     ];
 
-     public function curso(): BelongsTo
+    public function curso(): BelongsTo
     {
         return $this->belongsTo(Curso::class);
     }
@@ -28,26 +30,18 @@ class Grupo extends Model
 
     public function estudiantes(): BelongsToMany
     {
-        return $this->belongsToMany(Estudiante::class, 'estudiante_matriculado')
+        return $this->belongsToMany(Estudiante::class, 'estudiantes_matriculados')
             ->using(EstudianteMatriculado::class)
             ->withPivot('nota');
     }
 
-    public static function crearConDocentes(array $datos, array $docentes): self
+     public function asignarDocente(Docente $docente): void
     {
-        if (count($docentes) < 1 || count($docentes) > 2) {
-            throw new InvalidArgumentException('Un grupo debe ser impartido por 1 o 2 docentes.');
+        if ($this->docentes()->count() >= self::MAXIMO_DOCENTES) {
+            throw new DomainException('Un grupo no puede tener más de 2 docentes.');
         }
 
-        return DB::transaction(function () use ($datos, $docentes) {
-            $grupo = self::create($datos);
-
-            foreach ($docentes as $docente) {
-                $grupo->docentes()->attach($docente->id);
-            }
-
-            return $grupo;
-        });
+        $this->docentes()->attach($docente->id);
     }
 
     public function matricular(Estudiante $estudiante): void
@@ -55,8 +49,18 @@ class Grupo extends Model
         $this->estudiantes()->attach($estudiante->id);
     }
 
-    public function registrarNota(Estudiante $estudiante, float $nota): void
+    public function puedeAbrirse(): bool
     {
-        $this->estudiantes()->updateExistingPivot($estudiante->id, ['nota' => $nota]);
+        return $this->estudiantes()->count() >= self::MINIMO_ESTUDIANTES
+            && $this->docentes()->count() >= 1;
+    }
+
+    public function abrir(): void
+    {
+        if (! $this->puedeAbrirse()) {
+            throw new DomainException('El grupo necesita al menos 15 estudiantes y 1 docente para abrirse.');
+        }
+
+        $this->update(['abierto' => true]);
     }
 }
